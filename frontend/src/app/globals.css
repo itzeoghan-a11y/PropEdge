@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  ::selection {
+    background: #3b82f620;
+    color: #e8eaf0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #1a1d26;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #2a2d3a;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a3d4e;
+  }
+}
+
+@layer components {
+  .badge {
+    @apply inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium border;
+  }
+
+  .table-cell {
+    @apply px-3 py-2.5 text-sm whitespace-nowrap;
+  }
+
+  .table-head {
+    @apply px-3 py-2 text-2xs font-medium text-text-muted uppercase tracking-wider text-left;
+  }
+
+  .card {
+    @apply bg-surface border border-border rounded-lg;
+  }
+
+  .card-header {
+    @apply px-4 py-3 border-b border-border flex items-center justify-between;
+  }
+
+  .card-title {
+    @apply text-sm font-medium text-text-primary;
+  }
+
+  .stat-block {
+    @apply flex flex-col gap-0.5;
+  }
+
+  .stat-label {
+    @apply text-2xs text-text-muted uppercase tracking-wide;
+  }
+
+  .stat-value {
+    @apply text-sm font-mono font-medium text-text-primary;
+  }
+}
