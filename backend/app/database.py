@@ -15,11 +15,13 @@ from app.config import get_settings
 
 settings = get_settings()
 
+_db_url = settings.async_database_url
+_is_sqlite = _db_url.startswith("sqlite")
+
 engine = create_async_engine(
-    settings.database_url,
+    _db_url,
     echo=settings.environment == "development",
-    pool_size=10,
-    max_overflow=20,
+    **({} if _is_sqlite else {"pool_size": 10, "max_overflow": 20}),
     pool_pre_ping=True,
 )
 

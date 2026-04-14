@@ -56,8 +56,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup() -> None:
-    if settings.environment == "development":
-        await create_tables()
+    await create_tables()
     get_ml_model()   # pre-load ML model into memory
 
 
