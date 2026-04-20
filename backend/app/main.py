@@ -53,11 +53,25 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
+log = structlog.get_logger(__name__)
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup() -> None:
-    await create_tables()
-    get_ml_model()   # pre-load ML model into memory
+    # In production the schema is owned by Alembic migrations; running
+    # create_all against an already-migrated DB can stall or conflict.
+    if settings.environment != "production":
+        try:
+            await create_tables()
+        except Exception as exc:
+            log.error("create_tables failed at startup", error=str(exc))
+
+    # ML model load must never block the healthcheck — it's optional at runtime.
+    try:
+        get_ml_model()
+    except Exception as exc:
+        log.error("ml_model load failed at startup", error=str(exc))
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
