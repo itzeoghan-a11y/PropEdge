@@ -1,5 +1,7 @@
 import type {
   AnalyticsPerformance,
+  BacktestResult,
+  BetHistory,
   PlayerDetail,
   PropDetail,
   PropFilter,
@@ -10,7 +12,7 @@ import type {
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-class APIError extends Error {
+export class APIError extends Error {
   constructor(
     public status: number,
     message: string,
@@ -29,7 +31,7 @@ async function request<T>(
   if (params) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined) qs.set(k, String(v));
+      if (v !== undefined && v !== null) qs.set(k, String(v));
     }
     const str = qs.toString();
     if (str) url += `?${str}`;
@@ -50,7 +52,7 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+// ── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function login(email: string, password: string): Promise<string> {
   const form = new URLSearchParams({ username: email, password });
@@ -75,6 +77,13 @@ export function getMe() {
   return request<User>("/auth/me");
 }
 
+export function updateMe(payload: Partial<Pick<User, "alert_min_ev" | "alert_min_confidence" | "alert_steam" | "discord_webhook" | "phone_number" | "full_name">>) {
+  return request<User>("/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getCheckoutUrl(tier: "pro" | "elite") {
   return request<{ checkout_url: string }>(`/auth/checkout/${tier}`, {
     method: "POST",
@@ -93,6 +102,8 @@ export function getProps(filter: PropFilter & { limit?: number; offset?: number 
       bookmaker: filter.bookmaker,
       tier: filter.tier,
       direction: filter.direction,
+      best_available_only: filter.best_available_only,
+      has_steam: filter.has_steam,
       limit: filter.limit,
       offset: filter.offset,
     },
@@ -111,20 +122,44 @@ export function getSteamAlerts(hoursBack = 6) {
   return request<SteamAlert[]>("/props/steam", { params: { hours_back: hoursBack } });
 }
 
+export function getLineShop(params: {
+  sport?: string;
+  min_dispersion?: number;
+  min_soft_books?: number;
+  limit?: number;
+} = {}) {
+  return request<PropSummary[]>("/props/line-shop", { params });
+}
+
 // ── Players ───────────────────────────────────────────────────────────────────
 
 export function getPlayerDetail(id: number) {
   return request<PlayerDetail>(`/players/${id}`);
 }
 
-export function searchPlayers(query: string, sport?: string) {
-  return request<PlayerDetail[]>("/players", { params: { search: query, sport } });
+export function searchPlayers(query?: string, sport?: string) {
+  return request<PlayerDetail[]>("/players", {
+    params: { search: query, sport },
+  });
 }
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 export function getPerformance() {
   return request<AnalyticsPerformance>("/analytics/performance");
+}
+
+export function getBetHistory(params: {
+  date_from?: string;
+  date_to?: string;
+  sport?: string;
+  tier?: string;
+  bookmaker?: string;
+  resolved_only?: boolean;
+  limit?: number;
+  offset?: number;
+} = {}) {
+  return request<BetHistory>("/analytics/history", { params });
 }
 
 export function runBacktest(params: {
@@ -134,17 +169,25 @@ export function runBacktest(params: {
   min_edge?: number;
   min_confidence?: number;
 }) {
-  return request<Record<string, unknown>>("/analytics/backtest", { params });
+  return request<BacktestResult>("/analytics/backtest", { params });
 }
 
-// ── SWR keys ─────────────────────────────────────────────────────────────────
+export function getBacktestHistory() {
+  return request<unknown[]>("/analytics/backtest/history");
+}
+
+// ── SWR keys ──────────────────────────────────────────────────────────────────
 
 export const swrKeys = {
   props: (f: PropFilter) => ["props", JSON.stringify(f)],
   topProps: () => ["props", "top"],
   propDetail: (id: number) => ["prop", id],
   steam: (h: number) => ["steam", h],
+  lineShop: (p: object) => ["line-shop", JSON.stringify(p)],
   player: (id: number) => ["player", id],
+  players: (q?: string, s?: string) => ["players", q, s],
   me: () => ["me"],
   performance: () => ["analytics", "performance"],
+  history: (p: object) => ["history", JSON.stringify(p)],
+  backtest: (p: object) => ["backtest", JSON.stringify(p)],
 } as const;

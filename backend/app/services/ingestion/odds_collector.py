@@ -27,6 +27,7 @@ from app.models import (
     Player,
     Prop,
 )
+from app.services.market.line_shopper import apply_line_shopping_to_prop, compute_line_shopping
 
 log = logging.getLogger(__name__)
 settings = get_settings()
@@ -153,6 +154,9 @@ class OddsCollector:
         written = 0
         stat_type = STAT_TYPE_MAP.get(market_key, market_key)
 
+        # Track snapshots per prop for line shopping (prop_id -> (prop_obj, [snapshots]))
+        prop_snapshots: dict[int, tuple[Prop, list[OddsSnapshot]]] = {}
+
         for event in events:
             game_date_str = event.get("commence_time", "")
             try:
@@ -211,6 +215,11 @@ class OddsCollector:
                     )
                     db.add(snapshot)
 
+                    # Track snapshot for line shopping
+                    if prop.id not in prop_snapshots:
+                        prop_snapshots[prop.id] = (prop, [])
+                    prop_snapshots[prop.id][1].append(snapshot)
+
                     # Detect line movement
                     cache_key = (prop.id, book_key)
                     last = self._last_snapshots.get(cache_key)
@@ -236,6 +245,15 @@ class OddsCollector:
                     written += 1
 
         await db.flush()
+
+        # Apply line shopping to each prop that had snapshots in this batch
+        for prop_id, (prop_obj, snapshots) in prop_snapshots.items():
+            try:
+                shopping = compute_line_shopping(prop_id, snapshots, settings.sharp_books)
+                apply_line_shopping_to_prop(prop_obj, shopping)
+            except Exception as exc:
+                log.warning("Line shopping failed for prop %s: %s", prop_id, exc)
+
         return written
 
     async def _get_or_create_player(

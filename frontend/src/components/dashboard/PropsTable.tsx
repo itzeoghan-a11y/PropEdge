@@ -4,8 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   bookmakerLabel,
   cn,
-  defRankLabel,
-  evColor,
+  formatAmerican,
   formatOdds,
   formatPct,
   formatSport,
@@ -37,19 +36,19 @@ export function PropsTable({ props, loading, error }: PropsTableProps) {
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-border">
+          <tr className="border-b border-border bg-[#0f1117] sticky top-0 z-10">
             <th className="table-head w-8">#</th>
             <th className="table-head">Player</th>
             <th className="table-head">Prop</th>
-            <th className="table-head">Line</th>
+            <th className="table-head text-right">Line</th>
             <th className="table-head">Dir</th>
-            <th className="table-head">Book</th>
+            <th className="table-head">Best Book</th>
             <th className="table-head text-right">Odds</th>
             <th className="table-head text-right">Model%</th>
-            <th className="table-head text-right">Implied%</th>
             <th className="table-head text-right">Edge</th>
             <th className="table-head text-right">EV</th>
             <th className="table-head">Confidence</th>
+            <th className="table-head">Line Shop</th>
             <th className="table-head">Status</th>
           </tr>
         </thead>
@@ -67,7 +66,7 @@ export function PropsTable({ props, loading, error }: PropsTableProps) {
           ) : (
             props.map((prop, idx) => (
               <PropRow
-                key={prop.id}
+                key={`${prop.id}-${prop.best_direction}`}
                 prop={prop}
                 index={idx + 1}
                 onClick={() => router.push(`/props/${prop.id}`)}
@@ -116,7 +115,7 @@ function PropRow({
       </td>
 
       {/* Line */}
-      <td className="table-cell font-mono font-medium">{prop.line}</td>
+      <td className="table-cell text-right font-mono font-medium">{prop.line}</td>
 
       {/* Direction */}
       <td className="table-cell">
@@ -133,13 +132,22 @@ function PropRow({
       </td>
 
       {/* Book */}
-      <td className="table-cell text-text-secondary">
-        {bookmakerLabel(prop.best_bookmaker ?? "")}
+      <td className="table-cell">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-text-secondary text-xs">{bookmakerLabel(prop.best_bookmaker ?? "")}</span>
+          {prop.best_bookmaker && (
+            prop.best_direction === "over"
+              ? prop.best_bookmaker === prop.best_over_book
+              : prop.best_bookmaker === prop.best_under_book
+          ) && (
+            <span className="text-2xs text-accent">Best avail.</span>
+          )}
+        </div>
       </td>
 
       {/* Odds */}
       <td className="table-cell text-right font-mono text-text-secondary">
-        {prop.best_book_odds ? formatOdds(prop.best_book_odds) : "—"}
+        {prop.best_book_odds ? formatAmerican(prop.best_book_odds) : "—"}
       </td>
 
       {/* Model % */}
@@ -149,14 +157,9 @@ function PropRow({
         </span>
       </td>
 
-      {/* Implied % */}
-      <td className="table-cell text-right font-mono text-text-secondary">
-        {prop.implied_prob ? formatPct(prop.implied_prob) : "—"}
-      </td>
-
       {/* Edge */}
       <td className="table-cell text-right font-mono">
-        <span className={cn("font-semibold", evColor(edge))}>
+        <span className={cn("font-semibold", edge >= 0.10 ? "text-elite" : edge >= 0.05 ? "text-ev-positive" : "text-ev-neutral")}>
           {edge ? `+${(edge * 100).toFixed(2)}%` : "—"}
         </span>
       </td>
@@ -171,17 +174,34 @@ function PropRow({
         <ConfidenceMeter score={prop.confidence ?? 0} size="sm" />
       </td>
 
+      {/* Line shopping summary */}
+      <td className="table-cell">
+        {prop.line_dispersion != null && prop.line_dispersion > 0 ? (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-2xs font-mono text-text-muted">±{prop.line_dispersion.toFixed(2)}</span>
+            {(prop.soft_book_count ?? 0) > 0 && (
+              <span className="text-2xs text-ev-neutral">{prop.soft_book_count} soft</span>
+            )}
+          </div>
+        ) : (
+          <span className="text-text-muted text-xs">—</span>
+        )}
+      </td>
+
       {/* Status badges */}
       <td className="table-cell">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
           {prop.has_steam && (
             <span className="badge bg-steam/10 text-steam border-steam/30 text-2xs">
               ⚡ Steam
             </span>
           )}
+          {prop.steam_boosted && !prop.has_steam && (
+            <span className="badge bg-steam/5 text-steam/70 border-steam/20 text-2xs">⚡</span>
+          )}
           {prop.tier && (
             <span className={cn("badge text-2xs", tierBg(prop.tier))}>
-              {prop.tier}
+              {prop.tier === "elite" ? "🔥" : prop.tier === "high" ? "⚡" : ""} {prop.tier}
             </span>
           )}
         </div>
