@@ -55,8 +55,8 @@ export default function LineShopPage() {
       {/* Explainer */}
       <div className="bg-accent/5 border-b border-accent/20 px-6 py-3">
         <p className="text-xs text-text-secondary leading-relaxed max-w-3xl">
-          <span className="font-medium text-text-primary">How line shopping works:</span> A "soft" book is one whose implied probability sits ≥ 2.5pp below Pinnacle's no-vig line — they haven't adjusted to sharp action yet.
-          High line dispersion (std dev of lines across books) means there's a real shopping opportunity. Act on the best-available number before it closes.
+          <span className="font-medium text-text-primary">How line shopping works:</span> A &quot;soft&quot; book is one whose implied probability sits ≥ 2.5pp below Pinnacle&apos;s no-vig line — they haven&apos;t adjusted to sharp action yet.
+          High line dispersion (std dev of lines across books) means there&apos;s a real shopping opportunity. Act on the best-available number before it closes.
         </p>
       </div>
 
