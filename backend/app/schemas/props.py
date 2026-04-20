@@ -29,6 +29,9 @@ class EVOpportunityOut(BaseModel):
     tier: Literal["standard", "high", "elite"]
     sharp_prob: float | None
     sharp_deviation: float | None
+    is_best_available_line: bool
+    steam_boosted: bool
+    line_at_flag: float | None
     found_at: datetime
 
 
@@ -55,6 +58,33 @@ class SteamAlertOut(BaseModel):
     detected_at: datetime
 
 
+class BookDetailOut(BaseModel):
+    """Single book's line/odds for line shopping view."""
+    bookmaker: str
+    line: float
+    odds_over: float
+    odds_under: float
+    no_vig_prob_over: float
+    is_sharp: bool
+
+
+class LineShopping(BaseModel):
+    """Cross-book line shopping data for a prop."""
+    best_over_book: str | None
+    best_over_odds: float | None
+    best_under_book: str | None
+    best_under_odds: float | None
+    sharp_line: float | None
+    sharp_no_vig_prob_over: float | None
+    consensus_line: float | None
+    consensus_no_vig_prob_over: float | None
+    line_dispersion: float | None
+    prob_dispersion: float | None
+    soft_over_books: list[str]
+    soft_under_books: list[str]
+    book_details: list[BookDetailOut]
+
+
 class PropSummaryOut(BaseModel):
     """Compact row for the dashboard table."""
     id: int
@@ -78,7 +108,17 @@ class PropSummaryOut(BaseModel):
     tier: str | None
     sharp_prob: float | None
 
+    # Line shopping summary
+    best_over_book: str | None
+    best_over_odds: float | None
+    best_under_book: str | None
+    best_under_odds: float | None
+    consensus_line: float | None
+    line_dispersion: float | None
+    soft_book_count: int | None
+
     has_steam: bool
+    steam_boosted: bool
     is_overdue: bool
 
     class Config:
@@ -100,6 +140,7 @@ class PropDetailOut(BaseModel):
     model_breakdown: ModelBreakdownOut | None
     latest_odds: list[OddsOut]
     steam_alerts: list[SteamAlertOut]
+    line_shopping: LineShopping | None
 
     # Feature snapshot (for "why this bet?" panel)
     rolling_avg_5: float | None
@@ -123,3 +164,5 @@ class PropFilter(BaseModel):
     tier: str | None = None
     direction: str | None = None
     game_date: date | None = None
+    best_available_only: bool = False    # filter to is_best_available_line=True rows
+    has_steam: bool | None = None        # filter to props with active steam

@@ -49,6 +49,15 @@ class Prop(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
+    # Line shopping fields — updated each odds collection cycle
+    consensus_line: Mapped[float | None] = mapped_column(Float, nullable=True)
+    line_dispersion: Mapped[float | None] = mapped_column(Float, nullable=True)
+    best_over_book: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    best_over_odds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    best_under_book: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    best_under_odds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    soft_book_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     player: Mapped[Player] = relationship("Player", back_populates="props")
     odds_snapshots: Mapped[list[OddsSnapshot]] = relationship(
         "OddsSnapshot", back_populates="prop", cascade="all, delete-orphan"
@@ -89,6 +98,9 @@ class EVOpportunity(Base):
     """
 
     __tablename__ = "ev_opportunities"
+    __table_args__ = (
+        Index("ix_ev_best_available", "prop_id", "direction", "is_best_available_line"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     prop_id: Mapped[int] = mapped_column(
@@ -109,6 +121,15 @@ class EVOpportunity(Base):
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     won: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     found_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    # Line shopping: is this the best available number for this direction?
+    is_best_available_line: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Steam signal: was confidence boosted by an active steam alert?
+    steam_boosted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Explicit line capture at flag time (prop.line can drift after creation)
+    line_at_flag: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Closing line odds (populated before game start for CLV calculation)
+    closing_line_odds: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     prop: Mapped[Prop] = relationship("Prop", back_populates="ev_opportunities")
 

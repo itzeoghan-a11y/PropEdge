@@ -4,15 +4,15 @@ Props router.
 GET /props             — filtered prop list (dashboard table)
 GET /props/top         — highest EV props right now
 GET /props/steam       — recent steam alerts
+GET /props/line-shop   — cross-book line shopping view (best available numbers)
 GET /props/{id}        — full prop detail
-GET /props/arbitrage   — cross-book arbitrage opportunities
 POST /props/{id}/result — resolve a prop with actual result (admin)
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, desc, select
@@ -23,18 +23,23 @@ from app.database import get_db
 from app.models import EVOpportunity, OddsSnapshot, Player, Prop, SteamAlert
 from app.models.prop import ModelPrediction
 from app.schemas.props import (
+    BookDetailOut,
     EVOpportunityOut,
+    LineShopping,
+    ModelBreakdownOut,
     OddsOut,
     PropDetailOut,
     PropFilter,
     PropSummaryOut,
     SteamAlertOut,
-    ModelBreakdownOut,
 )
 from app.models.user import User
+from app.services.market.line_shopper import compute_line_shopping
+from app.config import get_settings
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/props", tags=["props"])
+settings = get_settings()
 
 
 @router.get("", response_model=list[PropSummaryOut])
@@ -47,6 +52,8 @@ async def list_props(
     tier: str | None = None,
     direction: str | None = None,
     game_date: date | None = None,
+    best_available_only: bool = False,
+    has_steam: bool | None = None,
     limit: int = Query(default=50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -85,12 +92,14 @@ async def list_props(
         query = query.where(EVOpportunity.direction == direction)
     if game_date:
         query = query.where(Prop.game_date == game_date)
+    if best_available_only:
+        query = query.where(EVOpportunity.is_best_available_line.is_(True))
 
     query = query.limit(effective_limit).offset(offset)
     result = await db.execute(query)
     rows = result.all()
 
-    # Check steam status per prop (use a set lookup)
+    # Steam status per prop
     prop_ids = {row.Prop.id for row in rows}
     steam_result = await db.execute(
         select(SteamAlert.prop_id).where(
@@ -102,9 +111,17 @@ async def list_props(
     )
     props_with_steam: set[int] = set(steam_result.scalars().all())
 
+    # Filter by has_steam after gathering the set
     summaries: list[PropSummaryOut] = []
     for row in rows:
         opp, prop, player = row.EVOpportunity, row.Prop, row.Player
+        prop_has_steam = prop.id in props_with_steam
+
+        if has_steam is True and not prop_has_steam:
+            continue
+        if has_steam is False and prop_has_steam:
+            continue
+
         summaries.append(PropSummaryOut(
             id=prop.id,
             player_id=player.id,
@@ -124,7 +141,16 @@ async def list_props(
             confidence=opp.confidence_score,
             tier=opp.tier,
             sharp_prob=opp.sharp_prob,
-            has_steam=prop.id in props_with_steam,
+            # Line shopping summary from Prop columns
+            best_over_book=prop.best_over_book,
+            best_over_odds=prop.best_over_odds,
+            best_under_book=prop.best_under_book,
+            best_under_odds=prop.best_under_odds,
+            consensus_line=prop.consensus_line,
+            line_dispersion=prop.line_dispersion,
+            soft_book_count=prop.soft_book_count,
+            has_steam=prop_has_steam,
+            steam_boosted=opp.steam_boosted,
             is_overdue=prop.game_date < date.today(),
         ))
 
@@ -156,8 +182,6 @@ async def steam_alerts(
     current_user: User = Depends(require_pro),  # pro+ only
 ):
     """Recent steam moves."""
-    cutoff = datetime.utcnow().__class__.utcnow()
-    from datetime import timedelta
     cutoff = datetime.utcnow() - timedelta(hours=hours_back)
 
     result = await db.execute(
@@ -182,13 +206,116 @@ async def steam_alerts(
     ]
 
 
+@router.get("/line-shop", response_model=list[PropSummaryOut])
+async def line_shop(
+    sport: str | None = None,
+    stat_type: str | None = None,
+    min_dispersion: float = Query(default=0.5, ge=0.0, description="Min line std-dev across books"),
+    min_soft_books: int = Query(default=1, ge=1, description="Min number of soft books"),
+    game_date: date | None = None,
+    limit: int = Query(default=30, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Line shopping view — props where books disagree or a soft number exists.
+
+    Returns props ordered by line dispersion descending (most disagreement first).
+    A high dispersion or multiple soft books means there's a stale line somewhere
+    that the sharp market has already moved past.
+    """
+    query = (
+        select(Prop, Player)
+        .join(Player, Prop.player_id == Player.id)
+        .where(Prop.is_active.is_(True))
+    )
+
+    if sport:
+        query = query.where(Prop.sport == sport)
+    if stat_type:
+        query = query.where(Prop.stat_type == stat_type)
+    if game_date:
+        query = query.where(Prop.game_date == game_date)
+    if min_dispersion > 0:
+        query = query.where(
+            Prop.line_dispersion >= min_dispersion
+        )
+    if min_soft_books > 0:
+        query = query.where(
+            Prop.soft_book_count >= min_soft_books
+        )
+
+    query = query.order_by(desc(Prop.line_dispersion)).limit(limit)
+    result = await db.execute(query)
+    rows = result.all()
+
+    # Build lightweight summaries focused on line shopping data
+    summaries: list[PropSummaryOut] = []
+    for row in rows:
+        prop, player = row.Prop, row.Player
+
+        # Grab best EV opp for this prop (for ev/edge/confidence fields)
+        ev_result = await db.execute(
+            select(EVOpportunity)
+            .where(EVOpportunity.prop_id == prop.id)
+            .order_by(desc(EVOpportunity.ev))
+            .limit(1)
+        )
+        best_opp = ev_result.scalar_one_or_none()
+
+        prop_has_steam = False
+        steam_check = await db.execute(
+            select(SteamAlert.id).where(
+                and_(
+                    SteamAlert.prop_id == prop.id,
+                    SteamAlert.detected_at >= datetime.utcnow() - timedelta(hours=6),
+                )
+            ).limit(1)
+        )
+        if steam_check.scalar_one_or_none():
+            prop_has_steam = True
+
+        summaries.append(PropSummaryOut(
+            id=prop.id,
+            player_id=player.id,
+            player_name=player.name,
+            sport=prop.sport,
+            stat_type=prop.stat_type,
+            line=prop.line,
+            game_date=prop.game_date,
+            opponent_team=prop.opponent_team,
+            best_direction=best_opp.direction if best_opp else None,
+            best_bookmaker=best_opp.bookmaker if best_opp else None,
+            best_book_odds=best_opp.book_odds if best_opp else None,
+            model_prob=best_opp.model_prob if best_opp else None,
+            implied_prob=best_opp.implied_prob if best_opp else None,
+            edge=best_opp.edge if best_opp else None,
+            ev=best_opp.ev if best_opp else None,
+            confidence=best_opp.confidence_score if best_opp else None,
+            tier=best_opp.tier if best_opp else None,
+            sharp_prob=best_opp.sharp_prob if best_opp else None,
+            best_over_book=prop.best_over_book,
+            best_over_odds=prop.best_over_odds,
+            best_under_book=prop.best_under_book,
+            best_under_odds=prop.best_under_odds,
+            consensus_line=prop.consensus_line,
+            line_dispersion=prop.line_dispersion,
+            soft_book_count=prop.soft_book_count,
+            has_steam=prop_has_steam,
+            steam_boosted=best_opp.steam_boosted if best_opp else False,
+            is_overdue=prop.game_date < date.today(),
+        ))
+
+    return summaries
+
+
 @router.get("/{prop_id}", response_model=PropDetailOut)
 async def prop_detail(
     prop_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Full prop detail including model breakdown, odds, game log context."""
+    """Full prop detail including model breakdown, odds, game log context, and line shopping."""
     # Load prop + player
     result = await db.execute(
         select(Prop, Player)
@@ -209,7 +336,7 @@ async def prop_detail(
     )
     ev_opps = ev_result.scalars().all()
 
-    # Latest odds
+    # Latest odds (one per book)
     snaps_result = await db.execute(
         select(OddsSnapshot)
         .where(OddsSnapshot.prop_id == prop_id)
@@ -259,7 +386,6 @@ async def prop_detail(
         opp_def_rank_pct = f.get("opp_def_rank_pct")
         sharp_soft_deviation = f.get("sharp_soft_deviation")
         sample_size = f.get("sample_size", 0)
-        # Build model breakdown from best EV opportunity + prediction
         if ev_opps:
             best = ev_opps[0]
             model_breakdown = ModelBreakdownOut(
@@ -273,6 +399,30 @@ async def prop_detail(
                 n_models=1,
                 weights_used={},
             )
+
+    # Live line shopping from current snapshots
+    shopping_result = compute_line_shopping(
+        prop_id=prop_id,
+        snapshots=latest_odds,
+        sharp_books=settings.sharp_books,
+    )
+    line_shopping_out = LineShopping(
+        best_over_book=shopping_result.best_over_book,
+        best_over_odds=shopping_result.best_over_odds,
+        best_under_book=shopping_result.best_under_book,
+        best_under_odds=shopping_result.best_under_odds,
+        sharp_line=shopping_result.sharp_line,
+        sharp_no_vig_prob_over=shopping_result.sharp_no_vig_prob_over,
+        consensus_line=shopping_result.consensus_line,
+        consensus_no_vig_prob_over=shopping_result.consensus_no_vig_prob_over,
+        line_dispersion=shopping_result.line_dispersion,
+        prob_dispersion=shopping_result.prob_dispersion,
+        soft_over_books=shopping_result.soft_over_books,
+        soft_under_books=shopping_result.soft_under_books,
+        book_details=[
+            BookDetailOut(**d) for d in shopping_result.book_details
+        ],
+    )
 
     return PropDetailOut(
         id=prop.id,
@@ -297,6 +447,9 @@ async def prop_detail(
                 tier=o.tier,
                 sharp_prob=o.sharp_prob,
                 sharp_deviation=o.sharp_deviation,
+                is_best_available_line=o.is_best_available_line,
+                steam_boosted=o.steam_boosted,
+                line_at_flag=o.line_at_flag,
                 found_at=o.found_at,
             )
             for o in ev_opps
@@ -327,6 +480,7 @@ async def prop_detail(
             )
             for a in steam_alerts_
         ],
+        line_shopping=line_shopping_out,
         rolling_avg_5=rolling_avg_5,
         rolling_avg_10=rolling_avg_10,
         rolling_std_10=rolling_std_10,
@@ -341,10 +495,17 @@ async def prop_detail(
 async def resolve_prop(
     prop_id: int,
     actual_result: float,
+    closing_line_odds_over: float | None = None,
+    closing_line_odds_under: float | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Admin endpoint: set actual result and resolve EV opportunities."""
+    """
+    Admin endpoint: set actual result and resolve EV opportunities.
+
+    Optionally pass closing_line_odds_over/under to capture closing line
+    value (CLV) — the final odds right before the game started.
+    """
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Superuser only")
 
@@ -354,6 +515,7 @@ async def resolve_prop(
         raise HTTPException(status_code=404, detail="Prop not found")
 
     prop.actual_result = actual_result
+    prop.is_active = False
 
     ev_result = await db.execute(
         select(EVOpportunity).where(EVOpportunity.prop_id == prop_id)
@@ -362,3 +524,11 @@ async def resolve_prop(
         hit = actual_result > prop.line
         opp.won = hit if opp.direction == "over" else not hit
         opp.resolved = True
+
+        # Capture closing line odds for CLV calculation if provided
+        if opp.direction == "over" and closing_line_odds_over is not None:
+            opp.closing_line_odds = closing_line_odds_over
+        elif opp.direction == "under" and closing_line_odds_under is not None:
+            opp.closing_line_odds = closing_line_odds_under
+
+    await db.commit()
