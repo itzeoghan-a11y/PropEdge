@@ -56,8 +56,17 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup() -> None:
-    await create_tables()
-    get_ml_model()   # pre-load ML model into memory
+    log = logging.getLogger(__name__)
+    # Dev convenience only — production schema is managed by Alembic.
+    if settings.environment != "production":
+        try:
+            await create_tables()
+        except Exception as exc:
+            log.warning("create_tables skipped: %s", exc)
+    try:
+        get_ml_model()
+    except Exception as exc:
+        log.warning("ML model preload skipped: %s", exc)
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────

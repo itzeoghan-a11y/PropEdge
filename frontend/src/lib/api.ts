@@ -8,7 +8,9 @@ import type {
   User,
 } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Requests go through the Next.js rewrite at /api/* (see next.config.ts).
+// Same-origin in the browser → no CORS. The rewrite proxies to the backend.
+const BASE = "/api";
 
 class APIError extends Error {
   constructor(

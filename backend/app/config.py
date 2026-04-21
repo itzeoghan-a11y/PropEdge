@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,12 +40,25 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
-        """Convert postgres:// or postgresql:// to postgresql+asyncpg:// for SQLAlchemy async."""
+        """Convert postgres:// or postgresql:// to postgresql+asyncpg:// for SQLAlchemy async.
+
+        asyncpg rejects libpq-style query params (sslmode, channel_binding), so
+        strip them here — Railway/Heroku Postgres URLs both include sslmode=require.
+        TLS is still negotiated automatically by asyncpg when the server requests it.
+        """
         url = self.database_url
         if url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql+asyncpg://", 1)
-        elif url.startswith("postgresql://"):
+        elif url.startswith("postgresql://") and "+asyncpg" not in url:
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        if "+asyncpg" in url and ("?" in url):
+            parts = urlsplit(url)
+            drop = {"sslmode", "channel_binding", "gssencmode", "target_session_attrs"}
+            kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                    if k not in drop]
+            url = urlunsplit((parts.scheme, parts.netloc, parts.path,
+                              urlencode(kept), parts.fragment))
         return url
 
     # ── Redis / Celery ─────────────────────────────────────────────

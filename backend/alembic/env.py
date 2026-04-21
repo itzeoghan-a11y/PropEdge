@@ -35,8 +35,8 @@ def do_run_migrations(connection):
 
 
 async def run_migrations_online() -> None:
-    import os
-    url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    from app.config import get_settings
+    url = get_settings().async_database_url
     engine = create_async_engine(url)
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)

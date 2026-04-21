@@ -74,8 +74,21 @@ celery_app.conf.beat_schedule = {
 
 
 def _run_async(coro):
-    """Helper to run async code from a sync Celery task."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Helper to run async code from a sync Celery task.
+
+    Celery tasks run in sync worker threads with no event loop, so we create a
+    fresh loop per task. asyncio.run() would also work but we want to keep the
+    loop reference for cleanup.
+    """
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 
 @celery_app.task(name="app.workers.tasks.collect_odds", bind=True, max_retries=3)
