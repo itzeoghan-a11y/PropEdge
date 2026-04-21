@@ -23,6 +23,7 @@ from app.models import User
 
 settings = get_settings()
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+_oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
 
 # ── Password hashing (bcrypt via passlib, pure-python fallback) ───────────────
 
@@ -108,6 +109,32 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         raise credentials_exc
+    return user
+
+
+async def get_current_user_optional(
+    token: str | None = Depends(_oauth2_scheme_optional),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """Return the authenticated user if a valid token is provided, else None.
+
+    Used for endpoints that are publicly readable but apply richer behavior
+    (e.g. higher result limits) when the caller is authenticated.
+    """
+    if not token:
+        return None
+    try:
+        claims = _verify_token(token)
+        user_id = claims.get("sub")
+        if user_id is None:
+            return None
+    except Exception:
+        return None
+
+    result = await db.execute(select(User).where(User.id == int(user_id)))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        return None
     return user
 
 

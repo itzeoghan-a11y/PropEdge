@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, require_pro
+from app.core.auth import get_current_user, get_current_user_optional, require_pro
 from app.database import get_db
 from app.models import EVOpportunity, OddsSnapshot, Player, Prop, SteamAlert
 from app.models.prop import ModelPrediction
@@ -50,13 +50,14 @@ async def list_props(
     limit: int = Query(default=50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Returns props with at least one EV opportunity meeting the filter criteria.
-    Free tier is limited to 5 results per request.
+    Anonymous and free-tier callers are capped at 5 results per request.
     """
-    effective_limit = min(limit, current_user.daily_prop_limit or limit)
+    per_request_cap = current_user.daily_prop_limit if current_user else 5
+    effective_limit = min(limit, per_request_cap or limit)
 
     # Join EVOpportunity → Prop → Player
     query = (
@@ -135,9 +136,9 @@ async def list_props(
 async def top_props(
     limit: int = Query(default=10, le=25),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
-    """Top 10 highest-EV props right now, minimum elite confidence."""
+    """Top highest-EV props right now, minimum elite confidence."""
     return await list_props(
         min_ev=0.05,
         min_confidence=65.0,
@@ -186,7 +187,7 @@ async def steam_alerts(
 async def prop_detail(
     prop_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     """Full prop detail including model breakdown, odds, game log context."""
     # Load prop + player

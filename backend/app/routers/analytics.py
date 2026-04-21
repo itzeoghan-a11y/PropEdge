@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, require_pro
+from app.core.auth import get_current_user_optional, require_pro
 from app.database import get_db
 from app.models import EVOpportunity, Player, Prop, SteamAlert
 from app.models.prop import BacktestResult
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 @router.get("/performance")
 async def performance_summary(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     """High-level performance stats for the platform."""
     today = date.today()

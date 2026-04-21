@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user_optional
 from app.database import get_db
 from app.models import Player, PlayerGameLog, Prop
 from app.models.user import User
@@ -19,7 +19,7 @@ async def list_players(
     search: str | None = None,
     limit: int = Query(default=50, le=200),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     query = select(Player)
     if sport:
@@ -49,7 +49,7 @@ async def list_players(
 async def player_detail(
     player_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     result = await db.execute(select(Player).where(Player.id == player_id))
     player = result.scalar_one_or_none()
